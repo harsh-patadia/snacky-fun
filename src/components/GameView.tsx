@@ -1,3 +1,5 @@
+import React, { useState } from 'react';
+import { motion } from 'motion/react';
 import { Position, GameStatus } from '../types';
 import { GRID_SIZE, DIRECTIONS } from '../models/SnakeGameModel';
 import { GAME_OPTIONS } from '../constants';
@@ -32,6 +34,97 @@ export function GameView({
   onReset,
   onChangeDirection,
 }: GameViewProps) {
+  const [joystick, setJoystick] = useState({
+    active: false,
+    startX: 0,
+    startY: 0,
+    offsetX: 0,
+    offsetY: 0,
+  });
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (status !== 'PLAYING') return;
+    
+    e.currentTarget.setPointerCapture(e.pointerId);
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    // Clamp starting coordinates so the 90px joystick base stays fully within bounds
+    const radius = 45;
+    const clampedX = Math.max(radius, Math.min(rect.width - radius, x));
+    const clampedY = Math.max(radius, Math.min(rect.height - radius, y));
+    
+    setJoystick({
+      active: true,
+      startX: clampedX,
+      startY: clampedY,
+      offsetX: 0,
+      offsetY: 0,
+    });
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!joystick.active) return;
+    
+    const rect = e.currentTarget.getBoundingClientRect();
+    const x = e.clientX - rect.left;
+    const y = e.clientY - rect.top;
+    
+    let dx = x - joystick.startX;
+    let dy = y - joystick.startY;
+    
+    const maxRadius = 35;
+    const distance = Math.sqrt(dx * dx + dy * dy);
+    
+    if (distance > maxRadius) {
+      const angle = Math.atan2(dy, dx);
+      dx = Math.cos(angle) * maxRadius;
+      dy = Math.sin(angle) * maxRadius;
+    }
+    
+    setJoystick(prev => ({
+      ...prev,
+      offsetX: dx,
+      offsetY: dy,
+    }));
+    
+    // Threshold to register turn
+    const threshold = 12;
+    if (distance > threshold) {
+      if (Math.abs(dx) > Math.abs(dy)) {
+        if (dx > 0) {
+          onChangeDirection(DIRECTIONS.RIGHT);
+        } else {
+          onChangeDirection(DIRECTIONS.LEFT);
+        }
+      } else {
+        if (dy > 0) {
+          onChangeDirection(DIRECTIONS.DOWN);
+        } else {
+          onChangeDirection(DIRECTIONS.UP);
+        }
+      }
+    }
+  };
+
+  const handlePointerUp = (e: React.PointerEvent<HTMLDivElement>) => {
+    if (!joystick.active) return;
+    
+    try {
+      e.currentTarget.releasePointerCapture(e.pointerId);
+    } catch (err) {
+      // Ignore
+    }
+    
+    // Smoothly snap back to center
+    setJoystick(prev => ({
+      ...prev,
+      active: false,
+      offsetX: 0,
+      offsetY: 0,
+    }));
+  };
   
   // Render empty 20x20 cell grid matrix representation for high-fidelity technical backing
   const renderGridCells = () => {
@@ -48,6 +141,17 @@ export function GameView({
     }
     return cells;
   };
+
+  // Calculate the active direction of the virtual joystick for styling the arrow guides
+  let activeDirection: 'UP' | 'DOWN' | 'LEFT' | 'RIGHT' | null = null;
+  const joystickDistance = Math.sqrt(joystick.offsetX * joystick.offsetX + joystick.offsetY * joystick.offsetY);
+  if (joystick.active && joystickDistance > 10) {
+    if (Math.abs(joystick.offsetX) > Math.abs(joystick.offsetY)) {
+      activeDirection = joystick.offsetX > 0 ? 'RIGHT' : 'LEFT';
+    } else {
+      activeDirection = joystick.offsetY > 0 ? 'DOWN' : 'UP';
+    }
+  }
 
   // 1. GAME SELECTION SCREEN
   if (selectedGameId === null) {
@@ -305,58 +409,47 @@ export function GameView({
         </button>
       </div>
 
-      {/* 4. Mobile Visual Controller (Virtual D-Pad) */}
-      <div className="block md:hidden w-full max-w-[200px] mt-6 flex flex-col items-center relative">
-        <div className="grid grid-cols-3 gap-2 w-full aspect-square">
-          <div></div>
-          <button
-            id="dpad-up"
-            onClick={() => onChangeDirection(DIRECTIONS.UP)}
-            disabled={status !== 'PLAYING'}
-            className="w-12 h-12 border border-white/10 active:border-cyan-400 bg-[#0d0d0f]/80 rounded-lg flex items-center justify-center text-white active:text-cyan-400 active:shadow-[0_0_10px_rgba(6,182,212,0.4)] mx-auto transition-all disabled:opacity-30 disabled:pointer-events-none"
+      {/* 4. Mobile Visual Controller (Virtual Joystick Pad) */}
+      <div className="block md:hidden w-full max-w-[340px] mt-6 flex flex-col items-center relative z-10">
+        <div 
+          className="w-full h-[180px] bg-transparent relative overflow-hidden select-none touch-none cursor-pointer"
+          onPointerDown={handlePointerDown}
+          onPointerMove={handlePointerMove}
+          onPointerUp={handlePointerUp}
+          onPointerCancel={handlePointerUp}
+        >
+          {/* FLOATING VIRTUAL JOYSTICK GRAPHICS - ALWAYS VISIBLE */}
+          <motion.div 
+            className="absolute pointer-events-none rounded-full border border-cyan-500/15 bg-cyan-950/20 backdrop-blur-[1px] flex items-center justify-center shadow-[0_0_15px_rgba(34,211,238,0.08)]"
+            animate={{
+              left: joystick.active ? `${joystick.startX - 45}px` : "calc(50% - 45px)",
+              top: joystick.active ? `${joystick.startY - 45}px` : "calc(50% - 45px)",
+            }}
+            transition={joystick.active ? { type: 'tween', duration: 0 } : { type: 'spring', stiffness: 350, damping: 25 }}
+            style={{
+              width: '90px',
+              height: '90px',
+            }}
           >
-            <span className="font-mono text-lg">▲</span>
-          </button>
-          <div></div>
+            {/* Subtle directional arrow guides */}
+            <span className={`absolute top-1 left-1/2 -translate-x-1/2 text-[10px] font-sans select-none transition-all duration-150 ${activeDirection === 'UP' ? 'text-cyan-400 drop-shadow-[0_0_4px_#22d3ee] font-bold scale-110' : 'text-cyan-500/20'}`}>▲</span>
+            <span className={`absolute bottom-1 left-1/2 -translate-x-1/2 text-[10px] font-sans select-none transition-all duration-150 ${activeDirection === 'DOWN' ? 'text-cyan-400 drop-shadow-[0_0_4px_#22d3ee] font-bold scale-110' : 'text-cyan-500/20'}`}>▼</span>
+            <span className={`absolute left-1 top-1/2 -translate-y-1/2 text-[10px] font-sans select-none transition-all duration-150 ${activeDirection === 'LEFT' ? 'text-cyan-400 drop-shadow-[0_0_4px_#22d3ee] font-bold scale-110' : 'text-cyan-500/20'}`}>◀</span>
+            <span className={`absolute right-1 top-1/2 -translate-y-1/2 text-[10px] font-sans select-none transition-all duration-150 ${activeDirection === 'RIGHT' ? 'text-cyan-400 drop-shadow-[0_0_4px_#22d3ee] font-bold scale-110' : 'text-cyan-500/20'}`}>▶</span>
 
-          <button
-            id="dpad-left"
-            onClick={() => onChangeDirection(DIRECTIONS.LEFT)}
-            disabled={status !== 'PLAYING'}
-            className="w-12 h-12 border border-white/10 active:border-cyan-400 bg-[#0d0d0f]/80 rounded-lg flex items-center justify-center text-white active:text-cyan-400 active:shadow-[0_0_10px_rgba(6,182,212,0.4)] mx-auto transition-all disabled:opacity-30 disabled:pointer-events-none"
-          >
-            <span className="font-mono text-lg">◀</span>
-          </button>
-          <div className="w-12 h-12 flex items-center justify-center font-mono text-[9px] text-gray-500 uppercase tracking-widest text-center self-center justify-self-center select-none leading-none">
-            {status === 'PLAYING' ? (
-              <button onClick={onPause} className="w-full h-full flex items-center justify-center hover:text-white">
-                ⏸
-              </button>
-            ) : (
-              <button onClick={onStart} className="w-full h-full flex items-center justify-center hover:text-white">
-                ▶
-              </button>
-            )}
-          </div>
-          <button
-            id="dpad-right"
-            onClick={() => onChangeDirection(DIRECTIONS.RIGHT)}
-            disabled={status !== 'PLAYING'}
-            className="w-12 h-12 border border-white/10 active:border-cyan-400 bg-[#0d0d0f]/80 rounded-lg flex items-center justify-center text-white active:text-cyan-400 active:shadow-[0_0_10px_rgba(6,182,212,0.4)] mx-auto transition-all disabled:opacity-30 disabled:pointer-events-none"
-          >
-            <span className="font-mono text-lg">▶</span>
-          </button>
-
-          <div></div>
-          <button
-            id="dpad-down"
-            onClick={() => onChangeDirection(DIRECTIONS.DOWN)}
-            disabled={status !== 'PLAYING'}
-            className="w-12 h-12 border border-white/10 active:border-cyan-400 bg-[#0d0d0f]/80 rounded-lg flex items-center justify-center text-white active:text-cyan-400 active:shadow-[0_0_10px_rgba(6,182,212,0.4)] mx-auto transition-all disabled:opacity-30 disabled:pointer-events-none"
-          >
-            <span className="font-mono text-lg">▼</span>
-          </button>
-          <div></div>
+            {/* Dynamic Inner Knob with subtle 3D appearance */}
+            <motion.div
+              className="w-10 h-10 rounded-full bg-gradient-to-br from-cyan-300 via-cyan-500 to-cyan-700 shadow-[0_3px_6px_rgba(0,0,0,0.5),inset_0_-2px_4px_rgba(0,0,0,0.4),inset_0_2px_4px_rgba(255,255,255,0.5)] flex items-center justify-center border border-white/20 relative"
+              animate={{
+                x: joystick.offsetX,
+                y: joystick.offsetY,
+              }}
+              transition={joystick.offsetX === 0 && joystick.offsetY === 0 ? { type: 'spring', stiffness: 450, damping: 20 } : { type: 'tween', duration: 0 }}
+            >
+              {/* 3D sphere glossy highlight dot */}
+              <div className="absolute top-1.5 left-1.5 w-2 h-2 rounded-full bg-white/40 blur-[0.5px]"></div>
+            </motion.div>
+          </motion.div>
         </div>
       </div>
 
